@@ -2,21 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from dataclasses import dataclass
-
-@dataclass
-class Config:
-    num_freq: int = 256
-    channels_input: int = 2
-    num_output: int = 500
-    conv_channels: tuple[int, ...] = (16, 32, 64, 64)
-    vertical_stride: tuple[int, ...] = (1, 2, 2, 1)
-    kernel_size: int = 3
-    bottle_neck_out_channels: int = 8
-    token_dim: int = 128
-    num_transformer_heads: int = 4
-    num_transformer_layers: int = 4
-    dropout: float = 0.1
+from config import Config
 
 class ConvNet(nn.Module):
     def __init__(self, channels_input, conv_channels, vertical_stride, kernel_size, padding):
@@ -52,26 +38,31 @@ class Bottleneck(nn.Module):
         return F.leaky_relu(self.bn(self.conv1x1(x)))
     
 class Tokenizer(nn.Module):
-    def __init__(self, freq_bins, in_channels, embedding_dim):
+    def __init__(self, freq_bins, in_channels, embedding_dim, max_time_steps):
         super().__init__()
         self.embedding_dim = embedding_dim
         self.projection = nn.Linear(freq_bins * in_channels, embedding_dim)
 
+        pe = torch.zeros(max_time_steps, embedding_dim)
+        position = torch.arange(0, max_time_steps, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, embedding_dim, 2).float() 
+            * (-math.log(10000.0) / embedding_dim)
+        )
+        
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        
+        self.register_buffer('pe', pe.unsqueeze(0))
+
     def forward(self, x):
         b, c, f, t = x.shape
+        
         x = x.permute(0, 3, 1, 2).contiguous().view(b, t, -1)
         x = self.projection(x)
 
-        position = torch.arange(0, t, dtype=torch.float, device=x.device).unsqueeze(1)
-        div_term = torch.exp(
-            torch.arange(0, self.embedding_dim, 2, device=x.device).float()
-            * (-math.log(10000.0) / self.embedding_dim)
-        )
-        pe = torch.zeros(t, self.embedding_dim, device=x.device)
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-
-        x = x + pe.unsqueeze(0)
+        x = x + self.pe[:, :t, :]
+        
         return x
     
 class TransformerNet(nn.Module):
@@ -89,15 +80,30 @@ class TransformerNet(nn.Module):
 
     def forward(self, x):
         return self.transformer(x)
+    
+class RecursiveConvReduction(nn.Module):
+    def __init__(self, embedding_dim):
+        super().__init__()
+        self.translator = nn.Conv1d(embedding_dim, embedding_dim, kernel_size=3, stride=2, padding=1)
+        self.conv = nn.Conv1d(embedding_dim, embedding_dim, kernel_size=3, stride=2, padding=1)
+        self.bn = nn.BatchNorm1d(embedding_dim)
+        self.relu = nn.LeakyReLU()
 
-
+    def forward(self, x):
+        x = x.transpose(1, 2)
+        x = self.relu(self.translator(x))
+        while x.shape[-1] > 2:
+            x = self.relu(self.bn(self.conv(x)))
+        x = self.relu(self.conv(x))
+        return x.view(x.shape[0], -1)
+    
 class Output(nn.Module):
     def __init__(self, embedding_dim, num_classes):
         super().__init__()
         self.fc = nn.Linear(embedding_dim, num_classes)
 
     def forward(self, x):
-        return self.fc(x.mean(dim=1))
+        return self.fc(x)
     
 
 class Talonet(nn.Module):
@@ -126,13 +132,17 @@ class Talonet(nn.Module):
         self.tokenizer = Tokenizer(
             freq_bins=freq_after_conv,
             in_channels=config.bottle_neck_out_channels,
-            embedding_dim=config.token_dim
+            embedding_dim=config.token_dim,
+            max_time_steps=config.max_time_steps
         )
         self.transformer_block = TransformerNet(
             embedding_dim=config.token_dim,
             num_heads=config.num_transformer_heads,
             num_layers=config.num_transformer_layers,
             dropout=config.dropout
+        )
+        self.conv_reduction = RecursiveConvReduction(
+            embedding_dim=config.token_dim
         )
         self.output_layer = Output(
             embedding_dim=config.token_dim,
@@ -144,6 +154,7 @@ class Talonet(nn.Module):
         x = self.bottleneck(x)
         x = self.tokenizer(x)
         x = self.transformer_block(x)
+        x = self.conv_reduction(x)
         x = self.output_layer(x)
         return x
 
@@ -162,13 +173,27 @@ if __name__ == "__main__":
         num_transformer_layers=2,
         dropout=0.1
     )
+    cfg = Config(
+        num_freq=1024,
+        max_time_steps=1024,
+        channels_input=2,
+        num_output=6000,
+        conv_channels=(16, 32, 64, 128, 128),
+        vertical_stride=(1, 1, 2, 2, 1),
+        kernel_size=7,
+        bottle_neck_out_channels=32,
+        num_transformer_heads=8,
+        num_transformer_layers=4,
+        token_dim=256,
+        dropout=0.1,
+    )
     model = Talonet(cfg)
 
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Setup worked!")
     print(f"Total Params: {total_params:,}")
 
-    dummy_input = torch.randn(1, cfg.channels_input, cfg.num_freq, 516)
+    dummy_input = torch.randn(1, cfg.channels_input, cfg.num_freq, 1024)
 
     _ = model(dummy_input)
 
