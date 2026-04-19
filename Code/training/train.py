@@ -49,7 +49,7 @@ class Trainer:
 
         if record:
             torch.save(checkpoint, self.best_checkpoint_path)
-            print(f"New record! Saved to {self.best_checkpoint_path}")
+            print(f"New record! Also saved to {self.best_checkpoint_path}")
 
     def load_checkpoint(self):
         print(f"Loading checkpoint: {self.checkpoint_path}")
@@ -83,7 +83,7 @@ class Trainer:
         for epoch in range(self.start_epoch, num_epochs):
             print(f"\nStarting epoch {epoch}.")
 
-            train_loader, val_loader = dataset.generate_data() #Todo
+            train_loader, val_loader = dataset.generate_epoch() #Todo
             avg_train_loss = self.train_epoch(train_loader)
             avg_val_loss, val_acc = self.validate(val_loader)
 

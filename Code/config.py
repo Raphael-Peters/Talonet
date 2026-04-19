@@ -11,6 +11,7 @@ class Config:
 
     num_freq: int = 256
     max_time_steps: int = 512
+    min_time_steps: int = 128
     channels_input: int = 2
     num_output: int = 500
     conv_channels: tuple[int, ...] = (16, 32, 64, 64)

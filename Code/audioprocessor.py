@@ -2,6 +2,7 @@ import torch
 import torchaudio.transforms as T
 import torch.nn.functional as F
 from config import Config
+import random
 
 class DataProcessor(torch.nn.Module):
     def __init__(self, config: Config):
@@ -27,12 +28,22 @@ class DataProcessor(torch.nn.Module):
         ])
 
         self.db_transform = T.AmplitudeToDB()
+        self.resamplers = torch.nn.ModuleDict()
 
-    def _prepare_waveform(self, waveform: torch.Tensor) -> torch.Tensor:
+    def _prepare_waveform(self, waveform: torch.Tensor, source_sr: int) -> torch.Tensor:
         if waveform.ndim == 1:
             waveform = waveform.unsqueeze(0)
+        
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
+
+        if source_sr != self.sr:
+            sr_key = str(source_sr)
+            if sr_key not in self.resamplers:
+                self.resamplers[sr_key] = T.Resample(source_sr, self.sr)
+            
+            waveform = self.resamplers[sr_key](waveform)
+
         return waveform
 
     def _normalize(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -50,6 +61,7 @@ class DataProcessor(torch.nn.Module):
 
     def get_spectrogram(self, waveform: torch.Tensor, t_start_sec: float = 0.0) -> torch.Tensor:
         waveform = self._prepare_waveform(waveform)
+
         start_sample = int(t_start_sec * self.sr)
         sliced_wav = waveform[:, start_sample:]
 
@@ -61,6 +73,27 @@ class DataProcessor(torch.nn.Module):
             channel_list.append(self._normalize(spec))
 
         return torch.cat(channel_list, dim=0)
+    
+    def spec_augment(self, spectrogram: torch.Tensor, 
+                    freq_mask_max: int = 15, 
+                    time_mask_max: int = 30, 
+                    num_masks: int = 3) -> torch.Tensor:
+        
+        aug_spec = spectrogram.clone()
+        
+        c, f_bins, t_steps = aug_spec.shape
+
+        for _ in range(num_masks):
+            f_width = random.randint(0, freq_mask_max)
+            f_start = random.randint(0, f_bins - f_width)
+            aug_spec[:, f_start:f_start + f_width, :] = 0.0
+
+        for _ in range(num_masks):
+            t_width = random.randint(0, time_mask_max)
+            t_start = random.randint(0, t_steps - t_width)
+            aug_spec[:, :, t_start:t_start + t_width] = 0.0
+
+        return aug_spec
 
     def get_relative_slice(self, waveform: torch.Tensor, t_rel: float) -> torch.Tensor:
         assert 0.0 <= t_rel <= 1.0, "t_rel must be between 0 and 1"

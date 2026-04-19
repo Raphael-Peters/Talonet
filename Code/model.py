@@ -163,6 +163,7 @@ import time
 if __name__ == "__main__":
     cfg = Config(
         num_freq=512,
+        max_time_steps=1024,
         channels_input=2,
         num_output=10,
         conv_channels=(4, 8, 16, 16),
@@ -173,7 +174,7 @@ if __name__ == "__main__":
         num_transformer_layers=2,
         dropout=0.1
     )
-    cfg = Config(
+    cfg2 = Config(
         num_freq=1024,
         max_time_steps=1024,
         channels_input=2,
