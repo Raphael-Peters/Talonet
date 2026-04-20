@@ -10,6 +10,7 @@ import shutil
 from tqdm import tqdm
 import zipfile
 import random
+import requests
 
 class TalonetDataset(Dataset):
     def __init__(self, 
@@ -22,8 +23,7 @@ class TalonetDataset(Dataset):
                 config: Config, 
                 epoch_size, 
                 samples_per_epoch, 
-                label_dim,
-                download_cb=None):
+                label_dim):
         self.df = pd.read_csv(csv_file)
         
         self.root_dir = Path(root_dir)
@@ -51,8 +51,6 @@ class TalonetDataset(Dataset):
         
         self.processor = DataProcessor(config)
         self.epoch_data = []
-
-        self.download_cb = download_cb
 
     def _calculate_weights(self):
         print(f"Calculating probability weights for {len(self.df)} entries...")
@@ -106,10 +104,13 @@ class TalonetDataset(Dataset):
                 shutil.rmtree(item)
 
     def download_sample(self, url):
-        if self.download_cb:
-            return self.download_cb(url)
-        print('No callback function provided for downloading!')
-        return None
+        try:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            return response.content
+        except Exception as e:
+            print(f"Error downloading sample from {url}: {e}")
+            return None
 
     def download_bird_samples(self):
             sampled_indices = torch.multinomial(self.weights, self.samples_per_epoch, replacement=True)

@@ -97,6 +97,21 @@ class RecursiveConvReduction(nn.Module):
         x = self.relu(self.conv(x))
         return x.view(x.shape[0], -1)
     
+class PoolingReduction(nn.Module):
+    def __init__(self, embedding_dim):
+        super().__init__()
+        self.fc = nn.Linear(embedding_dim * 2, embedding_dim)
+        self.relu = nn.LeakyReLU()
+
+    def forward(self, x):
+        mean_pool = torch.mean(x, dim=1) 
+        max_pool, _ = torch.max(x, dim=1)
+        
+        combined = torch.cat([mean_pool, max_pool], dim=-1)
+        
+        out = self.relu(self.fc(combined))
+        return out
+    
 class Output(nn.Module):
     def __init__(self, embedding_dim, num_classes):
         super().__init__()
@@ -141,9 +156,14 @@ class Talonet(nn.Module):
             num_layers=config.num_transformer_layers,
             dropout=config.dropout
         )
-        self.conv_reduction = RecursiveConvReduction(
-            embedding_dim=config.token_dim
-        )
+        if config.reduction == 'conv':
+            self.reduction = RecursiveConvReduction(
+                embedding_dim=config.token_dim
+            )
+        else:
+            self.reduction = PoolingReduction(
+                embedding_dim=config.token_dim
+            )
         self.output_layer = Output(
             embedding_dim=config.token_dim,
             num_classes=config.num_output
@@ -154,7 +174,7 @@ class Talonet(nn.Module):
         x = self.bottleneck(x)
         x = self.tokenizer(x)
         x = self.transformer_block(x)
-        x = self.conv_reduction(x)
+        x = self.reduction(x)
         x = self.output_layer(x)
         return x
 
@@ -172,9 +192,10 @@ if __name__ == "__main__":
         bottle_neck_out_channels=4,
         num_transformer_heads=2,
         num_transformer_layers=2,
-        dropout=0.1
+        dropout=0.1,
+        reduction='conv'
     )
-    cfg2 = Config(
+    cfg = Config(
         num_freq=1024,
         max_time_steps=1024,
         channels_input=2,
@@ -187,6 +208,7 @@ if __name__ == "__main__":
         num_transformer_layers=4,
         token_dim=256,
         dropout=0.1,
+        reduction='pooling'
     )
     model = Talonet(cfg)
 

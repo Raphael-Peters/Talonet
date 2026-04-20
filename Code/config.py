@@ -22,3 +22,4 @@ class Config:
     num_transformer_heads: int = 4
     num_transformer_layers: int = 4
     dropout: float = 0.1
+    reduction: str = 'conv' # pooling / conv
